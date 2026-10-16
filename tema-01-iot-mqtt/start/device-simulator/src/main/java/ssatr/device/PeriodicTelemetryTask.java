@@ -1,6 +1,8 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * TASK PERIODIC, cu perioada T = periodMs: fiecare job citește senzorul și
@@ -15,14 +17,14 @@ public class PeriodicTelemetryTask implements Runnable {
     private final String deviceId;
     private final TemperatureSensor sensor;
     private final MqttConnection mqtt;
-    private final BlockingQueue<Double> alarmEvents;
+    private final BlockingQueue<AlarmEvent> alarmEvents;
 
     // volatile: sunt citite aici, dar modificate de taskul aperiodic (alt thread)
     private volatile long periodMs = 2000;
     private volatile double threshold = 28.0;
 
     public PeriodicTelemetryTask(String deviceId, TemperatureSensor sensor, MqttConnection mqtt,
-                                 BlockingQueue<Double> alarmEvents) {
+                                 BlockingQueue<AlarmEvent> alarmEvents) {
         this.deviceId = deviceId;
         this.sensor = sensor;
         this.mqtt = mqtt;
@@ -47,6 +49,39 @@ public class PeriodicTelemetryTask implements Runnable {
         //
         // periodMs se poate schimba în timpul rulării (comanda SET_INTERVAL),
         // deci citiți-l la fiecare job.
+
+        // r_0: prima eliberare este chiar acum (în nanosecunde, timp monoton)
+        long nextRelease = System.nanoTime();
+
+        while (!Thread.currentThread().isInterrupted()) {
+            // ---- jobul k ----
+            double t = sensor.read();
+            long timestampMs = System.currentTimeMillis();
+            String payload = deviceId + ";" + timestampMs + ";"
+                    + String.format(Locale.US, "%.2f", t);
+            mqtt.publish(Config.telemetryTopic(deviceId), payload);
+            System.out.println("[periodic] " + payload);
+
+            // alarma nu se tratează aici, doar se semnalează taskului sporadic;
+            // pragul se citește o singură dată, ca să compar și să raportez aceeași valoare
+            double currentThreshold = threshold;
+            if (t > currentThreshold) {
+                alarmEvents.offer(new AlarmEvent(t, currentThreshold, timestampMs, System.nanoTime()));
+            }
+
+            // ---- așteptare absolută până la eliberarea jobului k+1 ----
+            // r_{k+1} = r_k + T; periodMs se citește din nou, poate s-a schimbat
+            nextRelease += periodMs * 1_000_000L;
+            long remainingNs = nextRelease - System.nanoTime();
+            if (remainingNs > 0) {
+                try {
+                    TimeUnit.NANOSECONDS.sleep(remainingNs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();   // oprire cerută: ieșim din buclă
+                }
+            }
+            // dacă remainingNs <= 0, jobul a depășit perioada: următorul pornește imediat
+        }
     }
 
     public void setPeriodMs(long periodMs) {
