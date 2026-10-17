@@ -48,7 +48,30 @@ public class CommandConsole implements Runnable {
         //   ("device-1 SET_INTERVAL 1000" -> "device-1" și "SET_INTERVAL 1000")
         //   și publicați comanda pe Config.commandTopic(deviceId).
         //   Afișați un mesaj de eroare dacă linia nu are formatul corect.
-        System.out.println("(trimiterea comenzilor neimplementată): " + line);
+
+        // "device-1   SET_INTERVAL 1000" -> ["device-1", "SET_INTERVAL 1000"]
+        // limita 2: primul cuvânt e deviceId, tot restul liniei e comanda
+        String[] parts = line.split("\\s+", 2);
+        if (parts.length < 2) {
+            System.out.println("Format: <deviceId> <COMANDA> [parametru], de exemplu: device-1 SET_INTERVAL 1000");
+            return;
+        }
+        String deviceId = parts[0];
+        String command = parts[1];
+
+        // deviceId devine un nivel din topic: "+" și "#" sunt wildcard-uri (interzise la
+        // publicare, Paho ar arunca o excepție), iar "/" ar adăuga niveluri în plus
+        if (deviceId.matches(".*[+#/].*")) {
+            System.out.println("deviceId invalid (nu poate contine + # /): " + deviceId);
+            return;
+        }
+
+        // comanda nu e validată aici: device-ul o verifică și răspunde cu OK sau ERROR
+        if (!dashboard.hasDevice(deviceId)) {
+            System.out.println("atentie: " + deviceId + " nu a trimis inca mesaje; comanda se trimite oricum");
+        }
+        mqtt.publish(Config.commandTopic(deviceId), command);
+        System.out.println("-> " + deviceId + ": " + command);
     }
 
     private void printHelp() {
