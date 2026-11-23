@@ -39,3 +39,9 @@ modules.order
 
 # Setări locale Docker Compose (porturi, fișierele alese pe server)
 .env
+
+# Fișiere locale Claude Code (nu se publică)
+CLAUDE.md
+.claude/
+tema-01-iot-mqtt/data/alarm.csv
+/tema-01-iot-mqtt/data
